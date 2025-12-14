@@ -121,6 +121,36 @@ class OsuLoginWorker(QThread):
             print(f"Error canjeando token: {response.text}")
             return None
 
+class DownloadWorker(QThread):
+    log_signal = pyqtSignal(str)
+    downloaded_map_signal = pyqtSignal(str)
+    downloads_finished_signal = pyqtSignal()
+
+    def __init__(self, download_urls):
+        super().__init__()
+        self.download_urls = download_urls
+
+    def run(self):
+        for set_id, download_url in self.download_urls.items():
+            self.log_signal.emit(f"Downloading from: {download_url}")
+            
+            try:
+                download_response = requests.get(download_url, allow_redirects=True)
+                if download_response.status_code == 200:
+                    # Save to ./downloads/prueba_mirror.osz
+                    filename = os.path.join(DOWNLOAD_PATH, f"{set_id}.osz")
+                    with open(filename, 'wb') as f:
+                        f.write(download_response.content)
+
+                    # Open in Osu Lazer
+                    self.downloaded_map_signal.emit(filename)
+
+                    self.log_signal.emit(f"Downloaded and saved as: {set_id}")
+                else:
+                    self.log_signal.emit(f"Failed to download from {download_url}: Status code {download_response.status_code}")
+            except Exception as e:
+                self.log_signal.emit(f"Exception occurred while downloading from {download_url}: {e}")
+        
 
 # ----------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -223,6 +253,47 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(self.layout_date_filter)
 
+        # ------------------------------------------------------
+        # Beatmapset status
+        self.layout_status_filter = QHBoxLayout()
+        self.layout_status_filter.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.status_filter_label = QLabel()
+        self.status_filter_label.setText("Status:")
+
+        self.status_filter_ranked = QPushButton()
+        self.status_filter_ranked.setText("R")
+        self.status_filter_ranked.setFixedWidth(30)
+        self.status_filter_ranked.setCheckable(True)
+
+        self.status_filter_loved = QPushButton()
+        self.status_filter_loved.setText("L")
+        self.status_filter_loved.setFixedWidth(30)
+        self.status_filter_loved.setCheckable(True)
+
+        self.status_filter_pending = QPushButton()
+        self.status_filter_pending.setText("P")
+        self.status_filter_pending.setFixedWidth(30)
+        self.status_filter_pending.setCheckable(True)
+
+        self.status_filter_unknown = QPushButton()
+        self.status_filter_unknown.setText("U")
+        self.status_filter_unknown.setFixedWidth(30)
+        self.status_filter_unknown.setCheckable(True)
+
+        self.status_filter_approved = QPushButton()
+        self.status_filter_approved.setText("A")
+        self.status_filter_approved.setFixedWidth(30)
+        self.status_filter_approved.setCheckable(True)
+
+        self.layout_status_filter.addWidget(self.status_filter_label)
+        self.layout_status_filter.addWidget(self.status_filter_ranked)
+        self.layout_status_filter.addWidget(self.status_filter_loved)
+        self.layout_status_filter.addWidget(self.status_filter_pending)
+        self.layout_status_filter.addWidget(self.status_filter_unknown)
+        self.layout_status_filter.addWidget(self.status_filter_approved)
+
+        self.main_layout.addLayout(self.layout_status_filter)
 
         # Main text area for logs
         self.log_area = QTextEdit()
@@ -255,7 +326,6 @@ class MainWindow(QMainWindow):
         self.token_button.setText("Successful!")
 
         print(f"Token obtained {ACCESS_TOKEN}")
-
    
     def on_diff_button_click(self, button_type):
         """
@@ -357,27 +427,13 @@ class MainWindow(QMainWindow):
         self.log_area.append("Download URLs generated successfully.")
 
         # Download the beatmaps
-        for set_id, download_url in self.download_urls.items():
-            self.log_area.append(f"Downloading from: {download_url}")
-            try:
-                download_response = requests.get(download_url, allow_redirects=True)
-                if download_response.status_code == 200:
-                    # Save to ./downloads/prueba_mirror.osz
-                    filename = os.path.join(DOWNLOAD_PATH, f"{set_id}.osz")
-                    with open(filename, 'wb') as f:
-                        f.write(download_response.content)
-
-                    # Open in Osu Lazer
-                    self._open_map_in_osu_lazer(filename)
-
-                    self.log_area.append(f"Downloaded and saved as: {set_id}")
-                else:
-                    self.log_area.append(f"Failed to download from {download_url}: Status code {download_response.status_code}")
-            except Exception as e:
-                self.log_area.append(f"Exception occurred while downloading from {download_url}: {e}")
+        self.downloadWorker = DownloadWorker(self.download_urls)
+        self.downloadWorker.log_signal.connect(self.log_area.append)
+        self.downloadWorker.downloaded_map_signal.connect(self._open_map_in_osu_lazer)
+        self.downloadWorker.start()
 
         return True
-    
+        
     def _open_map_in_osu_lazer(self, map_path):
         """Opens the downloaded map in Osu Lazer using the AppImage."""
         if os.path.exists(OSU_LAZER_APPIMAGE):
@@ -442,6 +498,28 @@ class MainWindow(QMainWindow):
             self.log_area.append("No date filter selected. Using since by default.")
             self.params.append('created>=' + date_value)
         return True
+
+    def _add_status_filters(self):
+        """Adds status filters to the search parameters."""
+        # Example: Only include ranked and loved maps
+
+        self.status_param = "status="
+        self.status_params = []
+        
+        if self.status_filter_ranked.isChecked():
+            self.status_params.append('r')
+        if self.status_filter_loved.isChecked():
+            self.status_params.append('l')
+        if self.status_filter_pending.isChecked():
+            self.status_params.append('p')
+        if self.status_filter_unknown.isChecked():
+            self.status_params.append('u')
+        if self.status_filter_approved.isChecked():
+            self.status_params.append('a')
+
+        if len(self.status_params) > 0:
+            self.status_param += ",".join(self.status_params)
+            self.params.append(self.status_param)
 
 def main():
     '''
