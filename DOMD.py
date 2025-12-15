@@ -46,6 +46,10 @@ DB_JSON_DIR = config.DB_JSON
 DB_JSON = DB_JSON_DIR / "db.json"
 LASER_FILES_PATH = config.LASER_FILES_PATH
 
+print(DOWNLOAD_PATH)
+print(DB_JSON_DIR)
+print(LASER_FILES_PATH)
+
 # Create if dont exist
 DOWNLOAD_PATH.mkdir(parents=True, exist_ok=True)
 LASER_FILES_PATH.mkdir(parents=True, exist_ok=True)
