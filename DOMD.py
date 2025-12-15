@@ -13,6 +13,7 @@ Usage: run the script in cmd/terminal: python get_existing_ids_lazer.py
 from concurrent.futures import thread
 import socket
 import os
+import subprocess
 import sys
 from urllib.parse import urlencode
 import webbrowser
@@ -25,8 +26,8 @@ import PyQt6.QtCore as QtCore
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget
 from PyQt6.QtWidgets import QLabel, QComboBox, QTextEdit, QLineEdit, QHBoxLayout, QDateEdit
 from PyQt6.QtWidgets import QFileDialog
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QDesktopServices
+from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop, QUrl
 # ----------------------------------------------------------------------
 import config
 # ----------------------------------------------------------------------
@@ -73,7 +74,9 @@ class OsuLoginWorker(QThread):
 
         # Open the browser for authentication
         self.log_signal.emit("Opening browser...")
-        webbrowser.open(auth_url)
+        # webbrowser.open(auth_url)
+
+        self.open_navigator(auth_url)
 
         # Opening a server to listen for responde. 127.0.0.1:8080
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -121,6 +124,23 @@ class OsuLoginWorker(QThread):
         else:
             self.log_signal.emit(f"Error trading for token: {response.text}")
             return None
+        
+    def open_navigator(self, url):
+        if sys.platform == 'linux':
+            # 1. Hacemos una copia del entorno actual
+            env = os.environ.copy()
+            
+            # 2. ELIMINAMOS la variable problemática que pone PyInstaller
+            # Esto hace que el subproceso busque librerías en el sistema, no en el .exe
+            if 'LD_LIBRARY_PATH' in env:
+                del env['LD_LIBRARY_PATH']
+                
+            # 3. Lanzamos el navegador manualmente con el entorno limpio
+            # xdg-open es el comando estándar en Linux para abrir la app default
+            subprocess.Popen(['xdg-open', url], env=env)
+        else:
+            # En Windows/Mac no suele dar este problema
+            webbrowser.open(url)
 
 class DownloadWorker(QThread):
     log_signal = pyqtSignal(str)
@@ -367,7 +387,6 @@ class DateFilterWidget(QWidget):
             # Re enable check for >= button
             self.date_filter_since_button.setChecked(False)
 
-
 class CheckableComboBox(QComboBox):
     def __init__(self):
         super().__init__()
@@ -427,7 +446,6 @@ class CheckableComboBox(QComboBox):
             if item.checkState() == QtCore.Qt.CheckState.Checked:
                 checked_data.append(item.data())
         return checked_data
-
 
 # ----------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -926,7 +944,7 @@ class MainWindow(QMainWindow):
             self.params.append("mode=ctb")
         elif selected_item_index == 2:
             self.params.append("mode=taiko")
-        elif selected_item_index == 4:
+        elif selected_item_index == 3:
             self.params.append("mode=mania")
         else:
             self.log_area.append("Wrong Mode selected in _add_mode_filter")
