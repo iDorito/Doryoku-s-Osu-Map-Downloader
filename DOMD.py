@@ -17,17 +17,17 @@ import subprocess
 import sys
 from urllib.parse import urlencode
 import webbrowser
+from pathlib import Path
 # ----------------------------------------------------------------------
 # 3rd party libraries
 import requests
 import json
-import PyQt6 as PQT6
 import PyQt6.QtCore as QtCore
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget
 from PyQt6.QtWidgets import QLabel, QComboBox, QTextEdit, QLineEdit, QHBoxLayout, QDateEdit
 from PyQt6.QtWidgets import QFileDialog
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QDesktopServices
-from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop, QUrl
+from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop
 # ----------------------------------------------------------------------
 import config
 # ----------------------------------------------------------------------
@@ -40,15 +40,17 @@ REDIRECT_URL = 'http://localhost:8080'
 PORT = 8080
 # ----------------------------------------------------------------------
 # DIRS
-FILE_PATH = os.path.abspath(__file__)
-FULL_PATH = os.path.dirname(FILE_PATH)
-DOWNLOAD_PATH = os.path.join(os.path.dirname(FILE_PATH), "maps")
+DOWNLOAD_PATH = config.DOWNLOAD_PATH
 OSU_EXECUTABLE = None
-DB_JSON = os.path.join(FULL_PATH, "db.json")
+DB_JSON_DIR = config.DB_JSON 
+DB_JSON = DB_JSON_DIR / "db.json"
+LASER_FILES_PATH = config.LASER_FILES_PATH
 
-# Check for download path and make the directories
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
+# Create if dont exist
+DOWNLOAD_PATH.mkdir(parents=True, exist_ok=True)
+LASER_FILES_PATH.mkdir(parents=True, exist_ok=True)
+DB_JSON_DIR.mkdir(parents=True, exist_ok=True)   # Crea la carpeta domd
+
 
 # ---------------------
 # --- BEATMAPSET MIRRORS ---
@@ -818,14 +820,33 @@ class MainWindow(QMainWindow):
         
     def _open_map_in_osu(self, map_path):
         """Opens the downloaded map in Osu Lazer using the AppImage."""
-        if os.path.exists(OSU_EXECUTABLE):
-            os.system(f'"{OSU_EXECUTABLE}" "{map_path}" &')
-            self.log_area.append(f"Opened map in Osu: {map_path}")
+        # If on Windows, let the OS open the file with its associated app
+        if sys.platform.startswith("win") or os.name == "nt":
+            try:
+                os.startfile(map_path)
+                self.log_area.append(f"Opened map with default app: {map_path}")
+                self._update_json_file(map_path)
+            except Exception as e:
+                self.log_area.append(f"Error opening map with default app: {e}")
+                return
+        # On macOS, use the 'open' command to let the OS handle the association
+        elif sys.platform == "darwin":
+            try:
+                subprocess.Popen(["open", map_path])
+                self.log_area.append(f"Opened map with default app: {map_path}")
+                self._update_json_file(map_path)
+            except Exception as e:
+                self.log_area.append(f"Error opening map with default app: {e}")
+                return
+        elif sys.platform == "linux":
+            if os.path.exists(OSU_EXECUTABLE):
+                os.system(f'"{OSU_EXECUTABLE}" "{map_path}" &')
+                self.log_area.append(f"Opened map in Osu: {map_path}")
 
-            # Update the JSON file with the downloaded maps
-            self._update_json_file(map_path)
-        else:
-            self.log_area.append("Error: Osu executable not found.")
+                # Update the JSON file with the downloaded maps
+                self._update_json_file(map_path)
+            else:
+                self.log_area.append("Error: Osu executable not found.")
 
     def _get_mirror_url(self, set_id):
         """Returns the download URL for the selected mirror and beatmapset ID."""
