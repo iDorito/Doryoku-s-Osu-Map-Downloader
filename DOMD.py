@@ -30,6 +30,7 @@ from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop
 # ----------------------------------------------------------------------
 import config
+import get_existing_ids_lazer
 # ----------------------------------------------------------------------
 # VARIABLES
 # ----------------------------------------------------------------------
@@ -43,17 +44,21 @@ PORT = 8080
 DOWNLOAD_PATH = config.DOWNLOAD_PATH
 OSU_EXECUTABLE = None
 DB_JSON_DIR = config.DB_JSON 
-DB_JSON = DB_JSON_DIR / "db.json"
+DB_JSON = DB_JSON_DIR / config.json_file
 LASER_FILES_PATH = config.LASER_FILES_PATH
+SETTINGS_FILE_PATH = config.SETTINGS_FILE_PATH
+SETTINGS_FILE = SETTINGS_FILE_PATH / config.settings_file
 
 print(DOWNLOAD_PATH)
 print(DB_JSON_DIR)
 print(LASER_FILES_PATH)
+print(SETTINGS_FILE_PATH)
 
-# Create if dont exist
+# Create folders if dont exist
 DOWNLOAD_PATH.mkdir(parents=True, exist_ok=True)
 LASER_FILES_PATH.mkdir(parents=True, exist_ok=True)
-DB_JSON_DIR.mkdir(parents=True, exist_ok=True)   # Crea la carpeta domd
+DB_JSON_DIR.mkdir(parents=True, exist_ok=True)   
+SETTINGS_FILE_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------
@@ -270,6 +275,24 @@ class BeatmatsetIdsWorker(QThread):
         self.log_signal.emit(f"Search finished, total beatmatset ids found: {len(self.dest_list)}")
         self.finished_signal.emit(self.dest_list)
 
+class DownloadedMapsWorker(QThread):
+    log_signal = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        self.log_signal.emit("Loading downloaded maps to database, please wait until its done.")
+
+        finished, maps_detected = get_existing_ids_lazer.scan_maps()
+
+        if finished:
+            self.log_signal.emit(f"Maps loaded successfully, total: {maps_detected}")
+        else:
+            self.log_signal.emit("No maps detected or error loading them.")
+
+    
+
 class StarRatingFilterWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -460,9 +483,9 @@ class MainWindow(QMainWindow):
 
         # Window settings
         self.setWindowTitle("Doryoku's Map Downloader")
-        self.setGeometry(100, 100, 600, 400)
+        self.setGeometry(100, 100, 700, 600)
         self.setMinimumSize(400, 600)
-        self.setMaximumSize(800, 600)
+        self.setMaximumSize(1280, 800)
 
         # Main layout
         self.main_layout = QVBoxLayout()
@@ -625,6 +648,22 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addLayout(self.layout_status_filter)
 
+        # Save button
+        self.save_button = QPushButton()
+        self.save_button.setText("Save Settings")
+        self.save_button.clicked.connect(self.save_settings)
+        self.layout_status_filter.addWidget(self.save_button)
+
+        # Refresh maps button
+        self.refresh_maps = QPushButton()
+        self.refresh_maps.setText("Load Downloaded Maps")
+        self.refresh_maps.clicked.connect(self.load_downloaded_maps)
+        self.layout_status_filter.addWidget(self.refresh_maps)
+
+        #
+        # LOG AREA AND DOWNLOAD BUTTON
+        #
+
         # Main text area for logs
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
@@ -640,39 +679,68 @@ class MainWindow(QMainWindow):
         self.central_widget.setLayout(self.main_layout)
         self.setCentralWidget(self.central_widget)
 
-    def create_star_rating_filter(self):
-        # Stars label
-        self.beatmap_difficulty_stars_label = QLabel()
-        self.beatmap_difficulty_stars_label.setText("Stars: ")
-        self.beatmap_difficulty_stars_label.setFixedWidth(40)
-        self.layout_filters.addWidget(self.beatmap_difficulty_stars_label)
-
-        # Beatmap difficulty
-        self.beatmap_difficulty_label = QLineEdit()
-        self.beatmap_difficulty_label.setPlaceholderText("(e.g., 8)")
-        self.beatmap_difficulty_label.setFixedWidth(50)
-        self.layout_filters.addWidget(self.beatmap_difficulty_label)
         
-        # Boolean check buttons
-        self.beatmap_difficulty_higher_than_check_button = QPushButton()
-        self.beatmap_difficulty_higher_than_check_button.setText(">")
-        self.beatmap_difficulty_higher_than_check_button.setFixedWidth(30)
-        self.beatmap_difficulty_higher_than_check_button.clicked.connect(lambda: self.on_diff_button_click(1))
-        self.layout_filters.addWidget(self.beatmap_difficulty_higher_than_check_button)
+        #
+        #
+        # APPLY SETTINGS
+        #
+        #
+        print("Loading settings")
+        settings = self.load_settings()
+        print("Settings loaded")
 
-        self.beatmap_difficulty_equals_check_button = QPushButton()
-        self.beatmap_difficulty_equals_check_button.setText("=")
-        self.beatmap_difficulty_equals_check_button.setFixedWidth(30)
-        self.beatmap_difficulty_equals_check_button.clicked.connect(lambda: self.on_diff_button_click(2))
-        self.layout_filters.addWidget(self.beatmap_difficulty_equals_check_button)
+        if settings:
+            # Restore osu_executable path
+            global OSU_EXECUTABLE
+            OSU_EXECUTABLE = settings.get("osu_executable", None)
 
-        self.beatmap_difficulty_less_than_check_button = QPushButton()
-        self.beatmap_difficulty_less_than_check_button.setText("<")
-        self.beatmap_difficulty_less_than_check_button.setFixedWidth(30)
-        self.beatmap_difficulty_less_than_check_button.clicked.connect(lambda: self.on_diff_button_click(3))
-        self.layout_filters.addWidget(self.beatmap_difficulty_less_than_check_button)
+            # Restore mirror index
+            self.mirror_dropdown.setCurrentIndex(settings.get("mirror_index", 0))
 
-        self.main_layout.addLayout(self.layout_filters)
+            # Restore star rating filters
+            star1 = settings.get("star_rating_filter_1", {})
+            self.star_rating_filter_1.difficulty_label.setText(star1.get("value", ""))
+            self.star_rating_filter_1.higher_than_check_button.setChecked(star1.get("greater_than", False))
+            self.star_rating_filter_1.equals_check_button.setChecked(star1.get("equals", False))
+            self.star_rating_filter_1.less_than_check_button.setChecked(star1.get("less_than", False))
+            self.star_rating_filter_1.setVisible(True)
+
+            star2 = settings.get("star_rating_filter_2", {})
+            self.star_rating_filter_2.difficulty_label.setText(star2.get("value", ""))
+            self.star_rating_filter_2.higher_than_check_button.setChecked(star2.get("greater_than", False))
+            self.star_rating_filter_2.equals_check_button.setChecked(star2.get("equals", False))
+            self.star_rating_filter_2.less_than_check_button.setChecked(star2.get("less_than", False))
+            self.star_rating_filter_2.setVisible(star2.get("enabled", False))
+
+            # Restore date filters
+            date1 = settings.get("date_filter_1", {})
+            if "date" in date1:
+                qdate1 = QtCore.QDate.fromString(date1["date"], "yyyy-MM-dd")
+                self.date_filter_1.date_filter.setDate(qdate1)
+            self.date_filter_1.date_filter_since_button.setChecked(date1.get("since", False))
+            self.date_filter_1.date_filter_until_button.setChecked(date1.get("until", False))
+            self.date_filter_1.setVisible(True)
+
+            date2 = settings.get("date_filter_2", {})
+            if "date" in date2:
+                qdate2 = QtCore.QDate.fromString(date2["date"], "yyyy-MM-dd")
+                self.date_filter_2.date_filter.setDate(qdate2)
+            self.date_filter_2.date_filter_since_button.setChecked(date2.get("since", False))
+            self.date_filter_2.date_filter_until_button.setChecked(date2.get("until", False))
+            self.date_filter_2.setVisible(date2.get("enabled", False))
+
+            # Restore status filters
+            status = settings.get("status_filters", {})
+            self.status_filter_ranked.setChecked(status.get("ranked", False))
+            self.status_filter_loved.setChecked(status.get("loved", False))
+            self.status_filter_pending.setChecked(status.get("pending", False))
+            self.status_filter_unknown.setChecked(status.get("unknown", False))
+            self.status_filter_approved.setChecked(status.get("approved", False))
+
+            # Restore mode filter
+            self.mode_filter.setCurrentIndex(settings.get("mode_filter_index", 0))
+
+
 
     def browse_osu_executable(self):
             global OSU_EXECUTABLE
@@ -975,7 +1043,86 @@ class MainWindow(QMainWindow):
             self.log_area.append("Wrong Mode selected in _add_mode_filter")
         
         return True
+    
+    def create_settings_dict(self):
+        """
+        Creates a dictionary with self widget states and paths
+        
+        :type self: MainWindow
+        """
 
+        settings = {
+            "osu_executable": OSU_EXECUTABLE,
+            "download_path": str(DOWNLOAD_PATH),
+            "db_json_dir": str(DB_JSON_DIR),
+            "laser_files_path": str(LASER_FILES_PATH),
+            "settings_file_path": str(SETTINGS_FILE_PATH),
+            "mirror_index": self.mirror_dropdown.currentIndex(),
+            "star_rating_filter_1": {
+                "value": self.star_rating_filter_1.difficulty_label.text(),
+                "greater_than": self.star_rating_filter_1.higher_than_check_button.isChecked(),
+                "equals": self.star_rating_filter_1.equals_check_button.isChecked(),
+                "less_than": self.star_rating_filter_1.less_than_check_button.isChecked(),
+                "enabled": True
+            },
+            "star_rating_filter_2": {
+                "value": self.star_rating_filter_2.difficulty_label.text(),
+                "greater_than": self.star_rating_filter_2.higher_than_check_button.isChecked(),
+                "equals": self.star_rating_filter_2.equals_check_button.isChecked(),
+                "less_than": self.star_rating_filter_2.less_than_check_button.isChecked(),
+                "enabled": self.star_rating_filter_2.isVisible()
+            },
+            "date_filter_1": {
+                "date": self.date_filter_1.date_filter.date().toString("yyyy-MM-dd"),
+                "since": self.date_filter_1.date_filter_since_button.isChecked(),
+                "until": self.date_filter_1.date_filter_until_button.isChecked(),
+                "enabled": True
+            },
+            "date_filter_2": {
+                "date": self.date_filter_2.date_filter.date().toString("yyyy-MM-dd"),
+                "since": self.date_filter_2.date_filter_since_button.isChecked(),
+                "until": self.date_filter_2.date_filter_until_button.isChecked(),
+                "enabled": self.date_filter_2.isVisible()
+            },
+            "status_filters": {
+                "ranked": self.status_filter_ranked.isChecked(),
+                "loved": self.status_filter_loved.isChecked(),
+                "pending": self.status_filter_pending.isChecked(),
+                "unknown": self.status_filter_unknown.isChecked(),
+                "approved": self.status_filter_approved.isChecked()
+            },
+            "mode_filter_index": self.mode_filter.currentIndex()
+        }
+        return settings
+
+    def save_settings(self):
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as file:
+            json.dump(self.create_settings_dict(), file, indent=4)
+        
+    def load_settings(self):
+        """
+            Loads the settings from the json file in local data files
+        """
+        print("inside load_settings")
+        # SETTINGS_FILE is a Path object pointing to the settings.json file
+        if not SETTINGS_FILE.exists():
+            print("Path or file doesn't exist")
+            self.log_area.append("No settings file detected, generating one with the current selected settings")
+
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as file:
+                json.dump(self.create_settings_dict(), file, indent=4)
+
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as file:
+            return json.load(file)
+
+    def load_downloaded_maps(self):
+        self.log_area.append("Checking for already maps downloaded in lazer")
+        # Keep a reference to the worker to prevent it from being garbage collected
+        self.downloaded_maps_worker = DownloadedMapsWorker()
+        self.downloaded_maps_worker.log_signal.connect(self.log_area.append)
+        self.downloaded_maps_worker.finished.connect(self.downloaded_maps_worker.deleteLater)
+        self.downloaded_maps_worker.start()
+    
 def main():
     '''
     Main entry for the application.
@@ -991,8 +1138,6 @@ def main():
 
         # Show after all widgets are added
         window.show()
-
-
 
         app.exec()
     except Exception as e:
