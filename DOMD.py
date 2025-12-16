@@ -483,7 +483,7 @@ class MainWindow(QMainWindow):
 
         # Window settings
         self.setWindowTitle("Doryoku's Map Downloader")
-        self.setGeometry(100, 100, 700, 600)
+        self.setGeometry(100, 100, 750, 600)
         self.setMinimumSize(400, 600)
         self.setMaximumSize(1280, 800)
 
